@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Calculadora de Batalla — La Maldad</title>
+<style>
+  :root{
+    --bg:#e7f0ff;
+    --ink:#13213a;
+    --panel:#ffffff;
+    --a:#c9f7cf;
+    --b:#d7ccff;
+    --accent:#ff7a00;
+    --border:#00000018;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+  .wrap{max-width:1180px;margin:20px auto;padding:0 12px}
+  h1{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+  .logo{width:44px;height:44px;border-radius:50%;box-shadow:0 0 20px rgba(255,122,0,.6);background:#000 url('logo.png') center/cover no-repeat}
+  .armies{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .army{border:1px solid var(--border);border-radius:12px;background:var(--panel);padding:10px}
+  .army.a{background:var(--a)}
+  .army.b{background:var(--b)}
+  .topbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+  button{cursor:pointer;border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 10px;transition:.15s}
+  button.small{padding:4px 8px;border-radius:6px;font-size:.88rem}
+  button.primary{background:var(--accent);color:#fff;border-color:#00000033}
+  button.ghost{background:transparent}
+  button:hover{transform:translateY(-1px);box-shadow:0 3px 10px rgba(0,0,0,.08)}
+  .stack{background:#ffffffaa;border:1px solid var(--border);border-radius:10px;padding:8px;margin:8px 0}
+  .stack-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:space-between}
+  .stack-title{font-weight:700}
+  .stack-controls{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  select,input[type="number"],input[type="text"]{padding:6px 8px;border-radius:8px;border:1px solid #cfd5df;background:#fff;min-width:70px}
+  table{width:100%;border-collapse:collapse;margin-top:6px}
+  th,td{border-top:1px solid #e1e5ee;padding:6px;text-align:left;font-size:.95rem}
+  th{background:#f7f8ff}
+  td.end{text-align:right}
+  .toggle{background:#f2f5ff}
+  .toggle.active{background:#142d4c;color:#fff;border-color:#142d4c}
+  .result{white-space:pre-wrap;background:#0d1b2a;color:#e7ffe7;padding:12px;border-radius:10px;margin-top:14px;box-shadow:inset 0 0 0 1px #00000033}
+  .footer{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-top:12px;flex-wrap:wrap}
+  .muted{opacity:.75}
+  .del{color:#a40000}
+  .pill{padding:6px 10px;border-radius:999px;background:#f1f3ff;border:1px solid #dfe3ff}
+  .note{font-size:.9rem;opacity:.85;margin-top:10px}
+  .group-title{font-weight:700;opacity:.85}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1><span class="logo" title="La Maldad"></span> Calculadora de Batalla — <em>La Maldad</em></h1>
+
+    <div class="armies">
+      <section id="armyA" class="army a">
+        <div class="topbar">
+          <h2 style="margin:0">Ejército A</h2>
+          <button class="small" onclick="addStack('A')">añadir pila</button>
+          <button class="small primary" onclick="startBattle()">Iniciar batalla</button>
+        </div>
+        <div id="stacksA"></div>
+      </section>
+
+      <section id="armyB" class="army b">
+        <div class="topbar">
+          <h2 style="margin:0">Ejército B</h2>
+          <button class="small" onclick="addStack('B')">añadir pila</button>
+          <button class="small primary" onclick="startBattle()">Iniciar batalla</button>
+        </div>
+        <div id="stacksB"></div>
+      </section>
+    </div>
+
+    <div class="footer">
+      <div>
+        <label>con rondas máximas <input id="maxRounds" type="number" min="1" value="100"/></label>
+        <label class="pill"><input id="variance" type="checkbox"/> Simular varianza</label>
+      </div>
+      <div class="muted">Tip: “unidad” agrega filas; “cortar” borra la fila (unidades, héroe o edificio).</div>
+    </div>
+
+    <div id="result" class="result" hidden></div>
+    <div class="note">
+      ⚠️ Esta es una simulación genérica. Los efectos de <b>edificio</b> y <b>héroe</b> usan multiplicadores base (ajustables en el código) por <i>nivel</i> y <i>%HP</i>.
+      Si dispones de cifras exactas del juego, cámbialas en los mapas de multiplicadores o directamente en las filas (ATK/HP).
+    </div>
+  </div>
+
+<script>
+// ——— Catálogos ———
+const UNIT_GROUPS = {
+  Land: ["Infantería","Caballería","Vehículo blindado","Artillería","Cañón de riel","Tanque","Tanque pesado","Convoy de aviones","Soldado de asalto"],
+  Air: ["Globo","Combatiente","Bombardeo","Zepelín"],
+  Naval: ["Submarino","Crucero ligero","Acorazado"]
+};
+
+const BUILDINGS = ["Fortaleza","Reclutamiento","Ferrocarril","Más alto","Fábrica","Cuartel","Aeródromo","Puerto"];
+
+const HEROES = [
+  "Henry “Hank” Callahan","Johan “Aardvark” Maes","John J. Pershing “Black Jack”","Otto Hersing",
+  "Togo Heihachiro","Tōgō Heihachirō con bombardeo","Tatiana Minchakievich (Tierra enemiga)","Tatiana Minchakievich (Tierra Amiga)",
+  "Joseph Joffre (Patria)","Joseph Joffre (No Patria)","Fiero “Marco” Martello","Orhan “Kangal” Demir",
+  "Vizconde Allenby","Georg Bruchmüller","Lawrence de Arabia","Fiona “Maeve” Porter","Iván “Vedmid” Kovalenko"
+];
+
+// Niveles 1–20
+const LVL_OPTS = Array.from({length:20}, (_,i)=>i+1);
+
+// Multiplicadores aproximados — AJUSTABLES
+const DOMAIN_ATK = { tierra:1.0, mar:1.0, aire:1.0, patrulla:0.9, desembarcar:0.85 };
+
+// Edificio: defensa base por tipo + bonificación por nivel (5% por nivel)
+const BUILD_DEF_BASE = 1.0;       // base adicional por tener edificio (se aplica con su %HP)
+const BUILD_DEF_PERLVL = 0.05;    // +5% por nivel
+
+// Héroe: +ATK y +DEF por nivel (2% por nivel)
+const HERO_ATK_PERLVL = 0.02;
+const HERO_DEF_PERLVL = 0.02;
+
+// Defaults
+const DEFAULTS = { hp:100, atk:10 };
+
+// ——— Estado ———
+const armies = { A:{stacks:[]}, B:{stacks:[]} };
+let stackCounter = 1;
+
+// ——— Utilidad DOM ———
+const $ = (s, r=document)=>r.querySelector(s);
+const $$ = (s, r=document)=>[...r.querySelectorAll(s)];
+function nextId(prefix){ return prefix + (stackCounter++); }
+
+// ——— CRUD de pilas/unidades/hero/edificio ———
+function addStack(side){
+  const id = nextId(side);
+  const st = {
+    id, side,
+    target: "Defender",
+    domain: "tierra",
+    distance: 0,
+    cover: "Zanja",
+    hero: null,       // {name, level, hpPct}
+    building: null,   // {type, level, hpPct}
+    units: [{type:"Infantería", count:10, hp:DEFAULTS.hp, atk:DEFAULTS.atk}]
+  };
+  armies[side].stacks.push(st);
+  render();
+}
+
+function removeStack(side, id){
+  armies[side].stacks = armies[side].stacks.filter(s=>s.id!==id);
+  render();
+}
+
+function addUnitRow(side, stackId){
+  const st = findStack(side, stackId);
+  st.units.push({type:"Infantería", count:1, hp:DEFAULTS.hp, atk:DEFAULTS.atk});
+  render();
+}
+
+function removeUnitRow(side, stackId, idx){
+  const st = findStack(side, stackId);
+  st.units.splice(idx,1);
+  render();
+}
+
+function toggleHero(side, stackId){
+  const st = findStack(side, stackId);
+  st.hero = st.hero ? null : {name:HEROES[0], level:1, hpPct:100};
+  render();
+}
+
+function toggleBuilding(side, stackId){
+  const st = findStack(side, stackId);
+  st.building = st.building ? null : {type:BUILDINGS[0], level:1, hpPct:100};
+  render();
+}
+
+function findStack(side, id){ return armies[side].stacks.find(s=>s.id===id); }
+
+// ——— Render ———
+function render(){
+  ["A","B"].forEach(side=>{
+    const host = $("#stacks"+side);
+    host.innerHTML = "";
+    armies[side].stacks.forEach(st=>{
+      const el = document.createElement("div");
+      el.className = "stack";
+      el.innerHTML = stackHTML(st, side);
+      host.appendChild(el);
+
+      // listeners head
+      $("select[data-k='target']", el).addEventListener("change", e=>{ st.target = e.target.value; updateTargetOptions(); });
+      $("select[data-k='domain']", el).addEventListener("change", e=>{ st.domain = e.target.value; });
+      $("select[data-k='distance']", el).addEventListener("change", e=>{ st.distance = parseInt(e.target.value,10); });
+      $("select[data-k='cover']", el).addEventListener("change", e=>{ st.cover = e.target.value; });
+      $("button[data-k='hero']", el).addEventListener("click", ()=>toggleHero(side, st.id));
+      $("button[data-k='building']", el).addEventListener("click", ()=>toggleBuilding(side, st.id));
+      $("button[data-k='addUnit']", el).addEventListener("click", ()=>addUnitRow(side, st.id));
+      $("button[data-k='cutStack']", el).addEventListener("click", ()=>removeStack(side, st.id));
+
+      // hero section
+      const heroWrap = $(".hero-wrap", el);
+      if(heroWrap){
+        $("select[data-k='heroName']", el).addEventListener("change", e=>{ st.hero.name = e.target.value; });
+        $("select[data-k='heroLvl']", el).addEventListener("change", e=>{ st.hero.level = parseInt(e.target.value,10); });
+        $("input[data-k='heroHP']", el).addEventListener("input", e=>{ st.hero.hpPct = clampPct(e.target.value); e.target.value = st.hero.hpPct; });
+        $("button[data-k='cutHero']", el).addEventListener("click", ()=>{ st.hero=null; render(); });
+      }
+
+      // building section
+      const bWrap = $(".build-wrap", el);
+      if(bWrap){
+        $("select[data-k='buildType']", el).addEventListener("change", e=>{ st.building.type = e.target.value; });
+        $("select[data-k='buildLvl']", el).addEventListener("change", e=>{ st.building.level = parseInt(e.target.value,10); });
+        $("input[data-k='buildHP']", el).addEventListener("input", e=>{ st.building.hpPct = clampPct(e.target.value); e.target.value = st.building.hpPct; });
+        $("button[data-k='cutBuild']", el).addEventListener("click", ()=>{ st.building=null; render(); });
+      }
+
+      // unit rows
+      $$(".urow", el).forEach((row, idx)=>{
+        $("select[data-k='type']", row).addEventListener("change", e=>{ st.units[idx].type = e.target.value; });
+        $("input[data-k='count']", row).addEventListener("input", e=>{ st.units[idx].count = Math.max(0, parseFloat(e.target.value||0)); });
+        $("input[data-k='hp']", row).addEventListener("input", e=>{ st.units[idx].hp = Math.max(0, parseFloat(e.target.value||0)); });
+        $("input[data-k='atk']", row).addEventListener("input", e=>{ st.units[idx].atk = Math.max(0, parseFloat(e.target.value||0)); });
+        $("button[data-k='cutUnit']", row).addEventListener("click", ()=>removeUnitRow(side, st.id, idx));
+      });
+    });
+    updateTargetOptions();
+  });
+}
+
+function clampPct(v){
+  let n = parseFloat(v||0);
+  if (isNaN(n)) n = 0;
+  return Math.max(0, Math.min(100, n));
+}
+
+function unitSelect(value){
+  let html = `<select data-k="type">`;
+  for(const group in UNIT_GROUPS){
+    html += `<optgroup label="${group}">`;
+    html += UNIT_GROUPS[group].map(n=>`<option ${n===value?"selected":""}>${n}</option>`).join("");
+    html += `</optgroup>`;
+  }
+  html += `</select>`;
+  return html;
+}
+
+function stackHTML(st, side){
+  const other = side==="A"?"B":"A";
+  const targets = ["Defender", ...armies[other].stacks.map(o=>o.id)];
+  const targetOpts = targets.map(t=>`<option ${t===st.target?"selected":""}>${t}</option>`).join("");
+  const domains = ["tierra","mar","aire","patrulla","desembarcar"].map(d=>`<option ${st.domain===d?"selected":""} value="${d}">${d}</option>`).join("");
+  const distances = [0,5,10,25,50,100].map(km=>`<option ${st.distance===km?"selected":""} value="${km}">${km} kilómetros</option>`).join("");
+  const covers = ["Zanja","Trinchera","Búnker","Sin cobertura"].map(c=>`<option ${st.cover===c?"selected":""}>${c}</option>`).join("");
+
+  // Hero row (if any)
+  let heroBlock = "";
+  if (st.hero){
+    const heroNames = HEROES.map(n=>`<option ${n===st.hero.name?"selected":""}>${n}</option>`).join("");
+    const lvlOpts = LVL_OPTS.map(l=>`<option ${l===st.hero.level?"selected":""}>${l}</option>`).join("");
+    heroBlock = `
+      <tr class="hero-wrap">
+        <td class="group-title">Héroe</td>
+        <td colspan="2"><select data-k="heroName">${heroNames}</select></td>
+        <td><select data-k="heroLvl">${lvlOpts}</select></td>
+        <td>HP <input type="number" data-k="heroHP" value="${st.hero.hpPct}" style="width:80px">%</td>
+        <td class="end"><button class="small ghost del" data-k="cutHero">cortar</button></td>
+      </tr>`;
+  }
+
+  // Building row (if any)
+  let buildBlock = "";
+  if (st.building){
+    const types = BUILDINGS.map(n=>`<option ${n===st.building.type?"selected":""}>${n}</option>`).join("");
+    const lvlOpts = LVL_OPTS.map(l=>`<option ${l===st.building.level?"selected":""}>${l}</option>`).join("");
+    buildBlock = `
+      <tr class="build-wrap">
+        <td class="group-title">Fortaleza</td>
+        <td><select data-k="buildType">${types}</select></td>
+        <td>nivel <select data-k="buildLvl">${lvlOpts}</select></td>
+        <td>HP <input type="number" data-k="buildHP" value="${st.building.hpPct}" style="width:80px">%</td>
+        <td></td>
+        <td class="end"><button class="small ghost del" data-k="cutBuild">cortar</button></td>
+      </tr>`;
+  }
+
+  // Units rows
+  let unitRows = st.units.map((u,idx)=>`
+    <tr class="urow">
+      <td>${unitSelect(u.type)}</td>
+      <td>Contar <input data-k="count" type="number" value="${u.count}" style="width:90px"></td>
+      <td>HP <input data-k="hp" type="number" value="${u.hp}" style="width:90px"></td>
+      <td>ATK <input data-k="atk" type="number" value="${u.atk}" style="width:90px"></td>
+      <td></td>
+      <td class="end"><button class="small ghost del" data-k="cutUnit">cortar</button></td>
+    </tr>
+  `).join("");
+
+  return `
+    <div class="stack-head">
+      <div class="stack-title">Pila ${st.id} vs 
+        <select data-k="target">${targetOpts}</select>
+      </div>
+      <div class="stack-controls">
+        <span>en</span><select data-k="domain">${domains}</select>
+        <span>en</span><select data-k="distance">${distances}</select>
+        <select data-k="cover">${covers}</select>
+        <button class="small toggle ${st.building?'active':''}" data-k="building">edificio</button>
+        <button class="small toggle ${st.hero?'active':''}" data-k="hero">héroe</button>
+        <button class="small" data-k="addUnit">unidad</button>
+        <button class="small ghost del" data-k="cutStack">cortar</button>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Tipo</th><th>Cantidad</th><th>HP</th><th>ATK/otros</th><th></th><th></th></tr>
+      </thead>
+      <tbody>
+        ${buildBlock}
+        ${heroBlock}
+        ${unitRows}
+      </tbody>
+    </table>
+  `;
+}
+
+function updateTargetOptions(){
+  ["A","B"].forEach(side=>{
+    const other = side==="A"?"B":"A";
+    armies[side].stacks.forEach(st=>{
+      const el = findStackEl(side, st.id);
+      if(!el) return;
+      const select = $("select[data-k='target']", el);
+      const chosen = select.value;
+      const targets = ["Defender", ...armies[other].stacks.map(o=>o.id)];
+      select.innerHTML = targets.map(t=>`<option ${t===chosen?"selected":""}>${t}</option>`).join("");
+    });
+  });
+}
+
+function findStackEl(side, id){
+  return [...document.querySelectorAll("#stacks"+side+" .stack")].find(el=>el.querySelector(".stack-title")?.textContent?.includes("Pila "+id));
+}
+
+// ——— Simulación ———
+function totalHPStack(st){
+  const unitsHP = st.units.reduce((sum,u)=>sum + (u.count*u.hp), 0);
+  const buildHP = st.building ? (st.building.hpPct/100)*1000 : 0; // valor abstracto
+  const heroHP  = st.hero ? (st.hero.hpPct/100)*200 : 0;          // valor abstracto
+  return unitsHP + buildHP + heroHP;
+}
+
+function stackAttack(st, variance){
+  const baseUnits = st.units.reduce((sum,u)=>sum + u.count*u.atk, 0);
+  const dom = DOMAIN_ATK[st.domain] || 1;
+  let heroBonus = 1;
+  if(st.hero){
+    heroBonus += st.hero.level*HERO_ATK_PERLVL * (st.hero.hpPct/100);
+  }
+  let atk = baseUnits * dom * heroBonus;
+  if(variance) atk *= (0.85 + Math.random()*0.3);
+  return atk;
+}
+
+function stackDefenseMult(st){
+  // cobertura ligera
+  const coverMap = {"Sin cobertura":1, "Zanja":1.15, "Trinchera":1.35, "Búnker":1.6};
+  let mult = coverMap[st.cover] || 1;
+
+  // edificio
+  if(st.building){
+    const eff = (st.building.hpPct/100);
+    mult += eff * (BUILD_DEF_BASE + st.building.level*BUILD_DEF_PERLVL);
+  }
+  // héroe
+  if(st.hero){
+    mult += (st.hero.level*HERO_DEF_PERLVL) * (st.hero.hpPct/100);
+  }
+  return Math.max(1, mult);
+}
+
+function distributeDamage(st, dmg){
+  const totalUnitsHP = st.units.reduce((sum,u)=>sum + (u.count*u.hp), 0);
+  let pool = totalUnitsHP;
+
+  // Si hay edificio/héroe, reciben daño también proporcional a su "HP abstracto"
+  const buildHP = st.building ? (st.building.hpPct/100)*1000 : 0;
+  const heroHP  = st.hero ? (st.hero.hpPct/100)*200 : 0;
+  pool += buildHP + heroHP;
+
+  if(pool<=0) return;
+
+  // daño a unidades
+  st.units.forEach(u=>{
+    const part = (u.count*u.hp) / pool;
+    let d = dmg * part;
+    // convertir daño a reducción de HP total de la fila
+    const totalRowHP = u.count*u.hp;
+    const remaining = Math.max(0, totalRowHP - d);
+    u.count = Math.floor(remaining / Math.max(1,u.hp));
+  });
+
+  // daño a edificio
+  if(st.building){
+    const part = buildHP / pool;
+    let d = dmg * part;
+    const abs = (st.building.hpPct/100)*1000;
+    const rem = Math.max(0, abs - d);
+    st.building.hpPct = Math.max(0, Math.min(100, Math.round((rem/1000)*100)));
+    if(st.building.hpPct<=0) st.building=null;
+  }
+
+  // daño a héroe
+  if(st.hero){
+    const part = heroHP / pool;
+    let d = dmg * part;
+    const abs = (st.hero.hpPct/100)*200;
+    const rem = Math.max(0, abs - d);
+    st.hero.hpPct = Math.max(0, Math.min(100, Math.round((rem/200)*100)));
+    if(st.hero.hpPct<=0) st.hero=null;
+  }
+
+  // limpiar filas vacías
+  st.units = st.units.filter(u=>u.count>0);
+}
+
+function startBattle(){
+  const A = JSON.parse(JSON.stringify(armies.A));
+  const B = JSON.parse(JSON.stringify(armies.B));
+  const variance = $("#variance").checked;
+  const maxRounds = Math.max(1, parseInt($("#maxRounds").value||1,10));
+
+  if(A.stacks.length===0 || B.stacks.length===0){
+    showResult("⚠️ Agrega al menos una pila por ejército.");
+    return;
+  }
+
+  const ctx = {round:0, log:[], casualties:{A:0,B:0}};
+  let aliveA = ()=>A.stacks.filter(s=>totalHPStack(s)>0);
+  let aliveB = ()=>B.stacks.filter(s=>totalHPStack(s)>0);
+
+  while(aliveA().length>0 && aliveB().length>0 && ctx.round<maxRounds){
+    ctx.round++;
+
+    const incomingA = new Map(aliveA().map(s=>[s.id,0]));
+    const incomingB = new Map(aliveB().map(s=>[s.id,0]));
+
+    // ataques A
+    aliveA().forEach(s=>{
+      const dmg = stackAttack(s, variance);
+      const foes = targetStacks(s, B);
+      const share = dmg / Math.max(foes.length,1);
+      foes.forEach(t=> incomingB.set(t.id, incomingB.get(t.id)+share) );
+    });
+
+    // ataques B
+    aliveB().forEach(s=>{
+      const dmg = stackAttack(s, variance);
+      const foes = targetStacks(s, A);
+      const share = dmg / Math.max(foes.length,1);
+      foes.forEach(t=> incomingA.set(t.id, incomingA.get(t.id)+share) );
+    });
+
+    // aplicar daños con defensa
+    applyIncoming(A, incomingA, ctx, "A");
+    applyIncoming(B, incomingB, ctx, "B");
+
+    const hpA = aliveA().reduce((n,s)=>n+totalHPStack(s),0).toFixed(1);
+    const hpB = aliveB().reduce((n,s)=>n+totalHPStack(s),0).toFixed(1);
+    ctx.log.push(`Ronda ${ctx.round}: HP A=${hpA} | HP B=${hpB}`);
+  }
+
+  const hpA = aliveA().reduce((n,s)=>n+totalHPStack(s),0);
+  const hpB = aliveB().reduce((n,s)=>n+totalHPStack(s),0);
+  const winner = hpA>hpB ? "Ejército A" : hpB>hpA ? "Ejército B" : "Empate";
+  const kd = (ctx.casualties.B>0) ? (ctx.casualties.A/ctx.casualties.B) : "∞";
+
+  let out = `Rondas jugadas: ${ctx.round}\n`;
+  out += `HP restante A: ${hpA.toFixed(1)}\nHP restante B: ${hpB.toFixed(1)}\n`;
+  out += `Ganador: ${winner}\n`;
+  out += `Bajas A: ${ctx.casualties.A.toFixed(1)} | Bajas B: ${ctx.casualties.B.toFixed(1)} | KD A/B = ${typeof kd==='string'?kd:kd.toFixed(2)}\n\n`;
+  out += ctx.log.join("\n");
+  showResult(out);
+}
+
+function targetStacks(s, defenderArmy){
+  let foes = defenderArmy.stacks.filter(x=>totalHPStack(x)>0);
+  if(s.target!=="Defender"){
+    const t = defenderArmy.stacks.find(x=>x.id===s.target && totalHPStack(x)>0);
+    if(t) foes = [t];
+  }
+  return foes.length?foes:defenderArmy.stacks.filter(x=>totalHPStack(x)>0);
+}
+
+function applyIncoming(army, incomingMap, ctx, sideKey){
+  army.stacks.forEach(s=>{
+    const inc = incomingMap.get(s.id)||0;
+    if(inc<=0 || totalHPStack(s)<=0) return;
+    const dmg = inc / stackDefenseMult(s);
+    const before = totalHPStack(s);
+    distributeDamage(s, dmg);
+    const after = totalHPStack(s);
+    ctx.casualties[sideKey] += Math.max(0, before-after);
+  });
+}
+
+function showResult(text){
+  const el = $("#result");
+  el.hidden = false;
+  el.textContent = text;
+}
+
+// Inicial
+addStack('A');
+addStack('B');
+</script>
+</body>
+</html>
